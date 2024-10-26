@@ -30,6 +30,7 @@ class StepInfo:
     done: chex.Array
     allowed_actions: chex.Array
     metalabels: chex.Array
+    truncated: chex.Array
 
 
 @chex.dataclass
@@ -79,7 +80,7 @@ class Simulator:
     def is_done(self: "Simulator", vertex):
         return self.sinks[vertex]
 
-    def get_init_states(self: "Simulator", states, rng_key=None):
+    def get_init_states(self: "Simulator", states, rng_key=None) -> States:
         if self.random_init == False:
             vertices = states.vertices.at[:].set(self.initial_state)
         else:
@@ -126,4 +127,5 @@ class Simulator:
             done = done,
             allowed_actions = self.allowed_actions[vertices_after_reset],
             metalabels = metalabels,
+            truncated = trunc,
         )

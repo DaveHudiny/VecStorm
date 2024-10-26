@@ -216,17 +216,17 @@ class StormVecEnv:
     def set_seed(self, seed):
         self.rng_key = jax.random.key(seed)
 
-    def reset(self):
+    def reset(self) -> tuple[jax.Array, jax.Array, jax.Array]:
         self.rng_key, reset_key = jax.random.split(self.rng_key)
         res: ResetInfo = self.simulator.reset(self.simulator_states, reset_key if self.random_init else None)
         self.simulator_states = res.states
         return res.observations, res.allowed_actions, res.metalabels
     
-    def step(self, actions):
+    def step(self, actions) -> tuple[jax.Array, jax.Array, jax.Array, jax.Array, jax.Array, jax.Array]:
         self.rng_key, step_key = jax.random.split(self.rng_key)
         res: StepInfo = self.simulator.step(self.simulator_states, actions, step_key)
         self.simulator_states = res.states
-        return res.observations, res.rewards, res.done, res.allowed_actions, res.metalabels
+        return res.observations, res.rewards, res.done, res.allowed_actions, res.metalabels, res.truncated
 
     def get_label(self, label, vertices=None):
         if vertices is None:
