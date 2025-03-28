@@ -139,8 +139,8 @@ class Simulator:
             observations = observations,
             rewards = rewards,
             done = done,
-            allowed_actions = self.allowed_actions[vertices_after_reset],
             truncated = trunc,
+            allowed_actions = allowed_actions,
             metalabels = metalabels,
         )
     
