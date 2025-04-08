@@ -1,4 +1,4 @@
-from typing import Set
+from typing import Set, Dict, Tuple
 import json
 import pickle
 
@@ -155,18 +155,28 @@ class StormVecEnvBuilder:
 
         # Observations
         logger.info("Computing observations")
-        valuations = pomdp.observation_valuations
-        nr_observables = len(json.loads(str(valuations.get_json(0))))
+        if hasattr(pomdp, "observations"):
 
-        observations_by_ids = np.zeros((pomdp.nr_observations, nr_observables), dtype=np.float32)
-        observation_labels = list(json.loads(str(valuations.get_json(0))).keys())
+            valuations = pomdp.observation_valuations
+            nr_observables = len(json.loads(str(valuations.get_json(0))))
 
-        for obs_id in range(pomdp.nr_observations):
-            valuation_json = json.loads(str(valuations.get_json(obs_id)))
-            observations_by_ids[obs_id] = np.array(list(valuation_json.values()), dtype=np.float32)
+            observations_by_ids = np.zeros((pomdp.nr_observations, nr_observables), dtype=np.float32)
+            observation_labels = list(json.loads(str(valuations.get_json(0))).keys())
 
-        state_observation_ids = np.array(pomdp.observations)
-        observations = observations_by_ids[state_observation_ids]
+            for obs_id in range(pomdp.nr_observations):
+                valuation_json = json.loads(str(valuations.get_json(obs_id)))
+                observations_by_ids[obs_id] = np.array(list(valuation_json.values()), dtype=np.float32)
+            state_observation_ids = np.array(pomdp.observations)
+            observations = observations_by_ids[state_observation_ids]
+        else: # Full observability. Use the state values as observations
+            observations_by_ids = state_values_by_ids
+            observation_labels = state_labels
+            state_observation_ids = np.arange(nr_states)
+            observations = state_values_by_ids
+
+
+        
+        
         # Save simulator data
         return Simulator(
             id = Simulator.get_free_id(),
@@ -184,7 +194,8 @@ class StormVecEnvBuilder:
             action_labels = action_labels,
             observation_labels = observation_labels,
             state_values = cast2jax(state_values_by_ids),
-            state_labels = state_labels
+            state_labels = state_labels,
+            state_observation_ids = cast2jax(state_observation_ids)
         )
 
 
@@ -194,7 +205,29 @@ class StormVecEnv:
         It uses JAX to compile the topology extracted from the given model, thus accelerating the interactions.
     """
 
-    def __init__(self, pomdp: SparsePomdp, get_scalarized_reward, num_envs=1, seed=42, metalabels=None, random_init=False, max_steps=100):
+    def __init__(self, pomdp: SparsePomdp, get_scalarized_reward: Dict[str, np.array], num_envs=1, seed=42, metalabels=None, random_init=False, max_steps=100):
+        """
+            pomdp: The POMDP object that should be compiled into a jax-based environment.
+            get_scalarized_reward: A function that accepts a dictionary indexed by reward signal names and returns an array of scalarized rewards.
+
+            Example:
+            get_scalarized_reward = lambda rewards: rewards['reward1'] + rewards['reward2']
+
+            num_envs: The number of environments to be simulated in parallel.
+            seed: The seed for the random number generator.
+            metalabels: A dictionary of metalabels to be used in the environment. For each metalabel,
+            the dictionary should contain a list of labels whose conjunction defines the metalabel.
+
+            Example:
+            metalabels = {
+                "metalabel1": ["label1", "label2"],
+                "metalabel2": ["label3"]
+            }
+
+            labels(s1) = [label1, label2] => metalabel1(s1) = True
+            labels(s2) = [label3] => metalabel2(s2) = True
+            labels(s3) = [label1] => metalabel1(s3) = False
+        """
         self.simulator_states = States(
             vertices = jnp.zeros(num_envs, jnp.int32),
             steps = jnp.zeros(num_envs, jnp.int32),
@@ -214,28 +247,52 @@ class StormVecEnv:
     def enable_random_init(self):
         self.simulator.id = Simulator.get_free_id()
         self.simulator.random_init = True
+        jax.clear_caches()
     
     def disable_random_init(self):
         self.simulator.id = Simulator.get_free_id()
         self.simulator.random_init = False
+        jax.clear_caches()
     
     def set_num_envs(self, num_envs):
         self.simulator_states = States(
             vertices = jnp.zeros(num_envs, jnp.int32),
             steps = jnp.zeros(num_envs, jnp.int32),
         )
+        jax.clear_caches()
     
     def set_seed(self, seed):
         self.rng_key = jax.random.key(seed)
 
-    def reset(self) -> tuple[jax.Array, jax.Array, jax.Array]:
+    def reset(self) -> Tuple[jnp.array, jnp.array, jnp.array]:
+        """
+            Reset all the environments. If `random_init` is set to True, the initial state will be randomly selected.
+
+            Returns:
+            - observations: The observations of the new states.
+            - allowed_actions: The boolean mask of allowed actions for the new states.
+            - metalabels: The boolean mask of metalabels for the new states.
+        """
         self.rng_key, reset_key = jax.random.split(self.rng_key)
         res: ResetInfo = self.simulator.reset(self.simulator_states, reset_key)
         self.simulator_states = res.states
         self.simulator_integer_observations = res.observations
         return res.observations, res.allowed_actions, res.metalabels
     
-    def step(self, actions) -> tuple[jax.Array, jax.Array, jax.Array, jax.Array, jax.Array, jax.Array]:
+    def step(self, actions) -> Tuple[jnp.array, jnp.array, jnp.array, jnp.array, jnp.array, jnp.array]:
+        """
+            Perform a step in the environment.
+
+            actions: The actions to be taken in the current states.
+
+            Returns:
+            - observations: The observations of the new states (after the potential reset).
+            - rewards: The rewards of the transitions (before the potential reset).
+            - done: A boolean mask indicating if the new states are terminal (before the potential reset).
+            - truncated: A boolean mask indicating if the new states reached the maximum number of steps (before the potential reset).
+            - allowed_actions: The boolean mask of allowed actions for the new states (after the potential reset).
+            - metalabels: The boolean mask of metalabels for the new states (before the potential reset).
+        """
         self.rng_key, step_key = jax.random.split(self.rng_key)
         res: StepInfo = self.simulator.step(self.simulator_states, actions, step_key)
         self.simulator_states = res.states
@@ -286,9 +343,21 @@ class StormVecEnv:
     @property
     def nr_states(self):
         return len(self.simulator.sinks)
-
+    
     def __del__(self):
         try:
             jax.clear_caches()
         except:
             pass
+
+    def set_states(self, states):
+        """
+            Set the states of the environments. This is useful for testing policies, jumpstarts or other purposes like debugging.
+            states: The states to be set.
+        """
+        self.simulator_states = States(
+            vertices = jnp.array(states, jnp.int32),
+            steps = jnp.zeros(len(states), jnp.int32), # TODO: Perhaps this should be better to set for a non-zero value, if we want to simulate only a couple of steps.
+        )
+        self.simulator.states = self.simulator_states
+        self.simulator_integer_observations = self.simulator.observations[self.simulator_states.vertices]

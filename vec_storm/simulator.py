@@ -29,9 +29,9 @@ class StepInfo:
     observations: chex.Array
     rewards: chex.Array
     done: chex.Array
+    truncated: chex.Array
     allowed_actions: chex.Array
     metalabels: chex.Array
-    truncated: chex.Array
     integer_observations: chex.Array = None
 
 
@@ -57,6 +57,7 @@ class Simulator:
 
     state_values: chex.Array
     state_labels: chex.Array
+    state_observation_ids: chex.Array
 
     FREE_ID = 0
 
@@ -85,8 +86,7 @@ class Simulator:
     def is_done(self: "Simulator", vertex):
         return self.sinks[vertex]
 
-    def get_init_states(self: "Simulator", states, rng_key) -> States:
-
+    def get_init_states(self: "Simulator", states, rng_key):
         if self.random_init == False:
             vertices = states.vertices.at[:].set(self.initial_state)
         else:

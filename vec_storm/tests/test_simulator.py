@@ -292,3 +292,23 @@ def test_toggle_random_init():
     env.step(np.array([0]*num_envs))
     env.step(np.array([3]*num_envs))
     assert np.all(env.simulator_states.vertices == 0)
+
+def test_set_states():
+    """
+        Test that the simulator can set states correctly.
+    """
+    pomdp = load_pomdp(AVOID_DET)
+    env = StormVecEnv(pomdp, _get_cost_reward, num_envs=1)
+    env.reset()
+    env.set_states(np.array([0]))
+    assert np.all(env.simulator_states.vertices == 0)
+    env.set_states(np.array([1]))
+    assert np.all(env.simulator_states.vertices == 1)
+    env.set_num_envs(2)
+    env.set_states(np.array([0, 1]))
+    assert np.all(env.simulator_states.vertices == np.array([0, 1]))
+    env.set_states(np.array([1, 0]))
+    assert np.all(env.simulator_states.vertices == np.array([1, 0]))
+    assert env.reset()[0].shape == (2, 1)
+    env.set_states(np.array([0, 1]))
+    assert env.step(np.array([0, 1]))[0].shape == (2, 1)
