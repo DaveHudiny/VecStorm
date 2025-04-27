@@ -20,6 +20,7 @@ class ResetInfo:
     observations: chex.Array
     allowed_actions: chex.Array
     metalabels: chex.Array
+    integer_observations: chex.Array = None
 
 
 @chex.dataclass
@@ -31,6 +32,7 @@ class StepInfo:
     truncated: chex.Array
     allowed_actions: chex.Array
     metalabels: chex.Array
+    integer_observations: chex.Array = None
 
 
 @chex.dataclass
@@ -52,6 +54,12 @@ class Simulator:
 
     action_labels: List[str]
     observation_labels: List[str]
+
+    state_values: chex.Array
+    state_labels: chex.Array
+    state_observation_ids: chex.Array
+
+    observation_by_ids: chex.Array
 
     FREE_ID = 0
 
@@ -105,6 +113,7 @@ class Simulator:
     @partial(jax.jit, static_argnums=0)
     def step(self: "Simulator", states, actions, rng_key) -> StepInfo:
         key1, key2 = jax.random.split(rng_key)
+        prev_done = self.sinks[states.vertices]
         new_vertices, new_vertex_idxs = jax.vmap(lambda s, a, k: self.sample_next_vertex(s, a, k))(states.vertices, actions, jax.random.split(key1, len(actions)))
         # Compute rewards of the transitions s -> a -> s'
         rewards = jax.vmap(lambda new_s: self.get_reward(new_s))(new_vertex_idxs)
@@ -114,18 +123,29 @@ class Simulator:
         # Reset done state s' to initial state i
         if not self.random_init:
             key2 = None
-        vertices_after_reset = jnp.where(done, self.get_init_states(states, rng_key=key2).vertices, new_vertices)
+        vertices_after_reset = jnp.where(prev_done, self.get_init_states(states, rng_key=key2).vertices, new_vertices)
+        done = jnp.where(prev_done, False, done)
         steps_after_reset = jnp.where(done, 0, steps)
+        rewards = jnp.where(prev_done, 0, rewards)
+        
         # Compute observation of states after reset (s' or i)
         observations = jax.vmap(lambda s: self.get_observation(s))(vertices_after_reset)
-        metalabels = self.metalabels[new_vertices]
+        metalabels = self.metalabels[vertices_after_reset]
 
+        allowed_actions = self.allowed_actions[vertices_after_reset]
+        allowed_actions = jnp.where(jnp.tile(jnp.reshape(done, (-1, 1)), (1, allowed_actions.shape[1])), 
+                                    jnp.ones_like(allowed_actions), allowed_actions)
+            
         return StepInfo(
             states = States(vertices = vertices_after_reset, steps = steps_after_reset),
             observations = observations,
             rewards = rewards,
             done = done,
             truncated = trunc,
-            allowed_actions = self.allowed_actions[vertices_after_reset],
+            allowed_actions = allowed_actions,
+
             metalabels = metalabels,
         )
+    
+    def set_max_steps(self, max_steps):
+        self.max_steps = max_steps

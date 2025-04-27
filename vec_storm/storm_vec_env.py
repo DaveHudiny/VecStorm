@@ -61,20 +61,30 @@ class StormVecEnvBuilder:
 
         rewards_types = sim.get_reward_names()
         nr_states = pomdp.nr_states
+        cls.nr_states = nr_states
         nr_actions = len(action_labels)
-
         # Row map: Assigns each (state, action) pair a row in the spare transition/reward matrix
         # or -1 if the action is not allowed in the state
+        # DH added: state_values_by_ids to enable work on state estimators combining full and partial observability.
         logger.info("Computing row map")
         row_map = np.zeros(nr_states * nr_actions, dtype=np.int32)
         row_map[:] = -1
+        sinks = np.zeros(nr_states, dtype=bool)
+
+        state_valuations = pomdp.state_valuations
+        state_labels = list(json.loads(str(state_valuations.get_json(0))).keys())
+        nr_state_labes = len(state_labels)
+        state_values_by_ids = np.zeros((pomdp.nr_states, nr_state_labes), dtype=np.float32)
         for state in range(nr_states):
+            sinks[state] = pomdp.is_sink_state(state)
             for action_offset in range(pomdp.get_nr_available_actions(state)):
                 labels = pomdp.choice_labeling.get_labels_of_choice(pomdp.get_choice_index(state, action_offset))
                 for label in labels:
                     if label != cls.NO_LABEL:
                         action_idx = action_labels2indices[label]
                         row_map[state * nr_actions + action_idx] = pomdp.transition_matrix.get_rows_for_group(state)[action_offset]
+            state_valuation_json = json.loads(str(state_valuations.get_json(state)))
+            state_values_by_ids[state] = np.array(list(state_valuation_json.values()), dtype=np.float32)
 
         # Transitions
         logger.info("Computing transitions")
@@ -86,7 +96,8 @@ class StormVecEnvBuilder:
 
         # Sinks
         logger.info("Computing sinks")
-        sinks = ~allowed_actions.any(axis=-1)
+        
+        # sinks = ~allowed_actions.any(axis=-1)
 
         # Raw rewards
         logger.info("Computing raw rewards")
@@ -144,19 +155,28 @@ class StormVecEnvBuilder:
 
         # Observations
         logger.info("Computing observations")
-        valuations = pomdp.observation_valuations
-        nr_observables = len(json.loads(str(valuations.get_json(0))))
+        if hasattr(pomdp, "observations"):
 
-        observations_by_ids = np.zeros((pomdp.nr_observations, nr_observables), dtype=np.float32)
-        observation_labels = list(json.loads(str(valuations.get_json(0))).keys())
+            valuations = pomdp.observation_valuations
+            nr_observables = len(json.loads(str(valuations.get_json(0))))
 
-        for obs_id in range(pomdp.nr_observations):
-            valuation_json = json.loads(str(valuations.get_json(obs_id)))
-            observations_by_ids[obs_id] = np.array(list(valuation_json.values()), dtype=np.float32)
+            observations_by_ids = np.zeros((pomdp.nr_observations, nr_observables), dtype=np.float32)
+            observation_labels = list(json.loads(str(valuations.get_json(0))).keys())
 
-        state_observation_ids = np.array(pomdp.observations)
-        observations = observations_by_ids[state_observation_ids]
+            for obs_id in range(pomdp.nr_observations):
+                valuation_json = json.loads(str(valuations.get_json(obs_id)))
+                observations_by_ids[obs_id] = np.array(list(valuation_json.values()), dtype=np.float32)
+            state_observation_ids = np.array(pomdp.observations)
+            observations = observations_by_ids[state_observation_ids]
+        else: # Full observability. Use the state values as observations
+            observations_by_ids = state_values_by_ids
+            observation_labels = state_labels
+            state_observation_ids = np.arange(nr_states)
+            observations = state_values_by_ids
 
+
+        
+        
         # Save simulator data
         return Simulator(
             id = Simulator.get_free_id(),
@@ -173,6 +193,10 @@ class StormVecEnvBuilder:
             metalabels = cast2jax(metalabels_data),
             action_labels = action_labels,
             observation_labels = observation_labels,
+            state_values = cast2jax(state_values_by_ids),
+            state_labels = state_labels,
+            state_observation_ids = cast2jax(state_observation_ids),
+            observation_by_ids = cast2jax(observations_by_ids),
         )
 
 
@@ -253,6 +277,7 @@ class StormVecEnv:
         self.rng_key, reset_key = jax.random.split(self.rng_key)
         res: ResetInfo = self.simulator.reset(self.simulator_states, reset_key)
         self.simulator_states = res.states
+        self.simulator_integer_observations = res.observations
         return res.observations, res.allowed_actions, res.metalabels
     
     def step(self, actions) -> Tuple[jnp.array, jnp.array, jnp.array, jnp.array, jnp.array, jnp.array]:
@@ -272,6 +297,7 @@ class StormVecEnv:
         self.rng_key, step_key = jax.random.split(self.rng_key)
         res: StepInfo = self.simulator.step(self.simulator_states, actions, step_key)
         self.simulator_states = res.states
+        self.simulator_integer_observations = res.observations
         return res.observations, res.rewards, res.done, res.truncated, res.allowed_actions, res.metalabels
 
     def get_label(self, label, vertices=None):
@@ -299,6 +325,12 @@ class StormVecEnv:
             Get list of observation labels that occur in the environment.
         """
         return self.simulator.observation_labels
+    
+    def get_state_labels(self):
+        return self.simulator.state_labels
+    
+    def get_state_values(self):
+        return self.simulator.state_values
 
     def save(self, file: str):
         pickle.dump(self, open(file, "wb"))
@@ -314,4 +346,19 @@ class StormVecEnv:
         return len(self.simulator.sinks)
     
     def __del__(self):
-        jax.clear_caches()
+        try:
+            jax.clear_caches()
+        except:
+            pass
+
+    def set_states(self, states):
+        """
+            Set the states of the environments. This is useful for testing policies, jumpstarts or other purposes like debugging.
+            states: The states to be set.
+        """
+        self.simulator_states = States(
+            vertices = jnp.array(states, jnp.int32),
+            steps = jnp.zeros(len(states), jnp.int32), # TODO: Perhaps this should be better to set for a non-zero value, if we want to simulate only a couple of steps.
+        )
+        self.simulator.states = self.simulator_states
+        self.simulator_integer_observations = self.simulator.observations[self.simulator_states.vertices]
