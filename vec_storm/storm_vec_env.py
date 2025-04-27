@@ -195,7 +195,8 @@ class StormVecEnvBuilder:
             observation_labels = observation_labels,
             state_values = cast2jax(state_values_by_ids),
             state_labels = state_labels,
-            state_observation_ids = cast2jax(state_observation_ids)
+            state_observation_ids = cast2jax(state_observation_ids),
+            observation_by_ids = cast2jax(observations_by_ids),
         )
 
 

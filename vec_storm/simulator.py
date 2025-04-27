@@ -59,6 +59,8 @@ class Simulator:
     state_labels: chex.Array
     state_observation_ids: chex.Array
 
+    observation_by_ids: chex.Array
+
     FREE_ID = 0
 
     def __hash__(self):
