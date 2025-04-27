@@ -143,6 +143,7 @@ class Simulator:
             done = done,
             truncated = trunc,
             allowed_actions = allowed_actions,
+
             metalabels = metalabels,
         )
     
