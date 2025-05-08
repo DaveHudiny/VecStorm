@@ -353,7 +353,7 @@ class StormVecEnv:
 
     def set_states(self, states):
         """
-            Set the states of the environments. This is useful for testing policies, jumpstarts or other purposes like debugging.
+            Set the states of the environments. This is useful for testing policies, jumpstarts, Go-Explore or other purposes like debugging.
             states: The states to be set.
         """
         self.simulator_states = States(
@@ -361,4 +361,19 @@ class StormVecEnv:
             steps = jnp.zeros(len(states), jnp.int32), # TODO: Perhaps this should be better to set for a non-zero value, if we want to simulate only a couple of steps.
         )
         self.simulator.states = self.simulator_states
+
         self.simulator_integer_observations = self.simulator.observations[self.simulator_states.vertices]
+
+    def no_step(self) -> Tuple[jnp.array, jnp.array, jnp.array, jnp.array, jnp.array, jnp.array]:
+        """
+            Perform a step in the environment without taking any action. This is used for obtaining the current simulator state.
+            Returns:
+            - observations: The observations of the new states (after the potential reset).
+            - rewards: The rewards of the transitions (before the potential reset).
+            - done: A boolean mask indicating if the new states are terminal (before the potential reset).
+            - truncated: A boolean mask indicating if the new states reached the maximum number of steps (before the potential reset).
+            - allowed_actions: The boolean mask of allowed actions for the new states (after the potential reset).
+            - metalabels: The boolean mask of metalabels for the new states (before the potential reset).
+        """
+        res : StepInfo = self.simulator.no_step(self.simulator_states)
+        return res.observations, res.rewards, res.done, res.truncated, res.allowed_actions, res.metalabels

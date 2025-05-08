@@ -147,5 +147,28 @@ class Simulator:
             metalabels = metalabels,
         )
     
+    def no_step(self : "Simulator", states):
+        """Simulate a step without any action taken."""
+        # Compute observation of states after reset (s' or i)
+        observations = jax.vmap(lambda s: self.get_observation(s))(states.vertices)
+        metalabels = self.metalabels[states.vertices]
+        trunc = states.steps >= self.max_steps
+        done = self.sinks[states.vertices]
+        allowed_actions = self.allowed_actions[states.vertices]
+        allowed_actions = jnp.where(jnp.tile(jnp.reshape(done, (-1, 1)), (1, allowed_actions.shape[1])), 
+                                    jnp.ones_like(allowed_actions), allowed_actions)
+        rewards = jax.vmap(lambda s: self.get_reward(s))(states.steps)
+
+        return StepInfo(
+            states = states,
+            observations = observations,
+            rewards = rewards,
+            done = done,
+            truncated = trunc,
+            allowed_actions = allowed_actions,
+            metalabels = metalabels,
+        )
+
+    
     def set_max_steps(self, max_steps):
         self.max_steps = max_steps
