@@ -48,7 +48,8 @@ class StormVecEnvBuilder:
         return list(sorted(action_labels))
 
     @classmethod
-    def build_from_pomdp(cls, pomdp: SparsePomdp, get_scalarized_reward, num_envs=1, seed=42, metalabels=None, max_steps=100, random_init=False):
+    def build_from_pomdp(cls, pomdp: SparsePomdp, get_scalarized_reward, num_envs=1, seed=42, metalabels=None, max_steps=100, random_init=False,
+                         obs_evaluator=None, quotient_state_valuations=None, observation_to_actions=None) -> Simulator:
         """
             pomdp: The POMDP object that should be compiled into a jax-based environment.
             get_scalarized_reward: A function that accepts a dictionary indexed by reward signal names and returns a number.
@@ -70,8 +71,12 @@ class StormVecEnvBuilder:
         row_map = np.zeros(nr_states * nr_actions, dtype=np.int32)
         row_map[:] = -1
         sinks = np.zeros(nr_states, dtype=bool)
+        states_to_observations = np.array(pomdp.observations)
 
-        state_valuations = pomdp.state_valuations
+        try:
+            state_valuations = pomdp.state_valuations
+        except:
+            state_valuations = quotient_state_valuations
         state_labels = list(json.loads(str(state_valuations.get_json(0))).keys())
         nr_state_labes = len(state_labels)
         state_values_by_ids = np.zeros((pomdp.nr_states, nr_state_labes), dtype=np.float32)
@@ -93,6 +98,16 @@ class StormVecEnvBuilder:
         # Allowed actions
         logger.info("Computing allowed actions")
         allowed_actions = (row_map != -1).reshape(nr_states, nr_actions)
+
+        # if observation_to_actions is not None: # Observation to actions contains mapping [ [legal_action1, legal_action2, ...], [legal_action1], ...] 
+        #     allowed_actions = np.zeros((nr_states, nr_actions), dtype=bool)
+        #     states_converted_to_observations = states_to_observations[np.arange(nr_states)]
+        #     for state in np.arange(states_converted_to_observations.shape[0]):
+        #         obs_id = states_converted_to_observations[state]
+        #         legal_actions = observation_to_actions[obs_id]
+        #         allowed_actions[state, legal_actions] = True
+            
+            
 
         # Sinks
         logger.info("Computing sinks")
@@ -143,7 +158,9 @@ class StormVecEnvBuilder:
 
         # Metalabels
         logger.info("Computing metalabels")
+        
         metalabel_keys = None if metalabels is None else list(metalabels.keys())
+        
         metalabels_data = None
         if metalabel_keys is not None:
             metalabels_data = np.ones((nr_states, len(metalabels)), dtype=bool)
@@ -155,28 +172,37 @@ class StormVecEnvBuilder:
 
         # Observations
         logger.info("Computing observations")
+
         if hasattr(pomdp, "observations"):
+            try:
+                valuations = pomdp.observation_valuations
+                nr_observables = len(json.loads(str(valuations.get_json(0))))
 
-            valuations = pomdp.observation_valuations
-            nr_observables = len(json.loads(str(valuations.get_json(0))))
+                observations_by_ids = np.zeros((pomdp.nr_observations, nr_observables), dtype=np.float32)
+                observation_labels = list(json.loads(str(valuations.get_json(0))).keys())
 
-            observations_by_ids = np.zeros((pomdp.nr_observations, nr_observables), dtype=np.float32)
-            observation_labels = list(json.loads(str(valuations.get_json(0))).keys())
-
-            for obs_id in range(pomdp.nr_observations):
-                valuation_json = json.loads(str(valuations.get_json(obs_id)))
-                observations_by_ids[obs_id] = np.array(list(valuation_json.values()), dtype=np.float32)
-            state_observation_ids = np.array(pomdp.observations)
-            observations = observations_by_ids[state_observation_ids]
+                for obs_id in range(pomdp.nr_observations):
+                    valuation_json = json.loads(str(valuations.get_json(obs_id)))
+                    observations_by_ids[obs_id] = np.array(list(valuation_json.values()), dtype=np.float32)
+                state_observation_ids = states_to_observations
+                observations = observations_by_ids[state_observation_ids]
+            except:
+                if obs_evaluator is None:
+                    raise ValueError("POMDP has observations, but no observation valuations and no obs_evaluator provided.")
+                observation_labels = obs_evaluator.obs_expr_label
+                valuator = obs_evaluator.obs_valuation
+                nr_observables = len(observation_labels)
+                observations_by_ids = np.zeros((pomdp.nr_observations, nr_observables), dtype=np.float32)
+                for obs_id in range(pomdp.nr_observations):
+                    observations_by_ids[obs_id] = np.array(valuator(obs_id), dtype=np.float32)
+                state_observation_ids = np.arange(pomdp.nr_observations)
+                observations = observations_by_ids[pomdp.observations]
         else: # Full observability. Use the state values as observations
             observations_by_ids = state_values_by_ids
             observation_labels = state_labels
             state_observation_ids = np.arange(nr_states)
             observations = state_values_by_ids
 
-
-        
-        
         # Save simulator data
         return Simulator(
             id = Simulator.get_free_id(),
@@ -206,7 +232,8 @@ class StormVecEnv:
         It uses JAX to compile the topology extracted from the given model, thus accelerating the interactions.
     """
 
-    def __init__(self, pomdp: SparsePomdp, get_scalarized_reward: Dict[str, np.array], num_envs=1, seed=42, metalabels=None, random_init=False, max_steps=100):
+    def __init__(self, pomdp: SparsePomdp, get_scalarized_reward: Dict[str, np.array], num_envs=1, seed=42, metalabels=None, random_init=False, max_steps=100,
+                 obs_evaluator=None, quotient_state_valuations=None, observation_to_actions=None):
         """
             pomdp: The POMDP object that should be compiled into a jax-based environment.
             get_scalarized_reward: A function that accepts a dictionary indexed by reward signal names and returns an array of scalarized rewards.
@@ -242,7 +269,10 @@ class StormVecEnv:
             seed=seed,
             metalabels=metalabels,
             max_steps=max_steps,
-            random_init=random_init
+            random_init=random_init,
+            obs_evaluator=obs_evaluator,
+            quotient_state_valuations=quotient_state_valuations,
+            observation_to_actions=observation_to_actions
         )
 
     def enable_random_init(self):

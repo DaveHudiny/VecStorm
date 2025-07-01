@@ -13,6 +13,13 @@ class States:
     vertices: chex.Array
     steps: chex.Array
 
+    def slice(self, start: int, end: int) -> "States":
+        """Return a sliced version of the States object."""
+        return States(
+            vertices=self.vertices[start:end],
+            steps=self.steps[start:end]
+        )
+
 
 @chex.dataclass
 class ResetInfo:
@@ -33,6 +40,30 @@ class StepInfo:
     allowed_actions: chex.Array
     metalabels: chex.Array
     integer_observations: chex.Array = None
+
+    @staticmethod
+    def combine(step_infos: List["StepInfo"]) -> "StepInfo":
+        """Combine multiple StepInfo objects into one."""
+        combined_states = States(
+            vertices=jnp.concatenate([si.states.vertices for si in step_infos]),
+            steps=jnp.concatenate([si.states.steps for si in step_infos])
+        )
+        combined_observations = jnp.concatenate([si.observations for si in step_infos])
+        combined_rewards = jnp.concatenate([si.rewards for si in step_infos])
+        combined_done = jnp.concatenate([si.done for si in step_infos])
+        combined_truncated = jnp.concatenate([si.truncated for si in step_infos])
+        combined_allowed_actions = jnp.concatenate([si.allowed_actions for si in step_infos])
+        combined_metalabels = jnp.concatenate([si.metalabels for si in step_infos])
+
+        return StepInfo(
+            states=combined_states,
+            observations=combined_observations,
+            rewards=combined_rewards,
+            done=combined_done,
+            truncated=combined_truncated,
+            allowed_actions=combined_allowed_actions,
+            metalabels=combined_metalabels,
+        )
 
 
 @chex.dataclass
