@@ -77,6 +77,8 @@ class StormVecEnvBuilder:
             state_valuations = pomdp.state_valuations
         except:
             state_valuations = quotient_state_valuations
+
+        
         state_labels = list(json.loads(str(state_valuations.get_json(0))).keys())
         nr_state_labes = len(state_labels)
         state_values_by_ids = np.zeros((pomdp.nr_states, nr_state_labes), dtype=np.float32)
@@ -94,7 +96,6 @@ class StormVecEnvBuilder:
         # Transitions
         logger.info("Computing transitions")
         transitions = SparseArray.from_data(nr_states, nr_actions, row_map, pomdp.transition_matrix)
-
         # Allowed actions
         logger.info("Computing allowed actions")
         allowed_actions = (row_map != -1).reshape(nr_states, nr_actions)
@@ -195,7 +196,7 @@ class StormVecEnvBuilder:
                 observations_by_ids = np.zeros((pomdp.nr_observations, nr_observables), dtype=np.float32)
                 for obs_id in range(pomdp.nr_observations):
                     observations_by_ids[obs_id] = np.array(valuator(obs_id), dtype=np.float32)
-                state_observation_ids = np.arange(pomdp.nr_observations)
+                state_observation_ids = states_to_observations
                 observations = observations_by_ids[pomdp.observations]
         else: # Full observability. Use the state values as observations
             observations_by_ids = state_values_by_ids
@@ -307,7 +308,7 @@ class StormVecEnv:
         self.rng_key, reset_key = jax.random.split(self.rng_key)
         res: ResetInfo = self.simulator.reset(self.simulator_states, reset_key)
         self.simulator_states = res.states
-        self.simulator_integer_observations = res.observations
+        self.simulator_integer_observations = res.integer_observations
         return res.observations, res.allowed_actions, res.metalabels
     
     def step(self, actions) -> Tuple[jnp.array, jnp.array, jnp.array, jnp.array, jnp.array, jnp.array]:
@@ -327,7 +328,7 @@ class StormVecEnv:
         self.rng_key, step_key = jax.random.split(self.rng_key)
         res: StepInfo = self.simulator.step(self.simulator_states, actions, step_key)
         self.simulator_states = res.states
-        self.simulator_integer_observations = res.observations
+        self.simulator_integer_observations = res.integer_observations
         return res.observations, res.rewards, res.done, res.truncated, res.allowed_actions, res.metalabels
 
     def get_label(self, label, vertices=None):

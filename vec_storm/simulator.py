@@ -54,6 +54,7 @@ class StepInfo:
         combined_truncated = jnp.concatenate([si.truncated for si in step_infos])
         combined_allowed_actions = jnp.concatenate([si.allowed_actions for si in step_infos])
         combined_metalabels = jnp.concatenate([si.metalabels for si in step_infos])
+        integer_observations = jnp.concatenate([si.integer_observations for si in step_infos]) if step_infos[0].integer_observations is not None else None
 
         return StepInfo(
             states=combined_states,
@@ -63,6 +64,7 @@ class StepInfo:
             truncated=combined_truncated,
             allowed_actions=combined_allowed_actions,
             metalabels=combined_metalabels,
+            integer_observations=integer_observations
         )
 
 
@@ -134,11 +136,13 @@ class Simulator:
     def reset(self: "Simulator", states: States, rng_key) -> ResetInfo:
         new_states = self.get_init_states(states, rng_key)
         observations = jax.vmap(lambda s: self.get_observation(s))(new_states.vertices)
+        integer_observations = self.state_observation_ids[new_states.vertices].reshape(-1, 1) 
         return ResetInfo(
             states = new_states,
             observations = observations,
             allowed_actions = self.allowed_actions[new_states.vertices],
             metalabels = self.metalabels[new_states.vertices],
+            integer_observations = integer_observations
         )
 
     @partial(jax.jit, static_argnums=0)
@@ -171,7 +175,7 @@ class Simulator:
         allowed_actions = self.allowed_actions[vertices_after_reset]
         allowed_actions = jnp.where(jnp.tile(jnp.reshape(done, (-1, 1)), (1, allowed_actions.shape[1])),
                                     jnp.ones_like(allowed_actions), allowed_actions)
-
+        integer_observations = self.state_observation_ids[vertices_after_reset].reshape(-1, 1)
         return StepInfo(
             states=States(vertices=vertices_after_reset, steps=steps_after_reset),
             observations=observations,
@@ -179,8 +183,8 @@ class Simulator:
             done=done | trunc,
             truncated=trunc,
             allowed_actions=allowed_actions,
-
             metalabels=metalabels,
+            integer_observations=integer_observations
         )
     
     def no_step(self : "Simulator", states):
