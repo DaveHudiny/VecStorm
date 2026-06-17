@@ -8,7 +8,6 @@ import jax
 from jax import numpy as jnp
 
 from stormpy import simulator
-from stormpy.storage.storage import SparsePomdp
 
 from .sparse_array import SparseArray
 from .simulator import Simulator, States, StepInfo, ResetInfo
@@ -48,7 +47,7 @@ class StormVecEnvBuilder:
         return list(sorted(action_labels))
 
     @classmethod
-    def build_from_pomdp(cls, pomdp: SparsePomdp, get_scalarized_reward, num_envs=1, seed=42, metalabels=None, max_steps=100, random_init=False,
+    def build_from_pomdp(cls, pomdp, get_scalarized_reward, num_envs=1, seed=42, metalabels=None, max_steps=100, random_init=False,
                          obs_evaluator=None, quotient_state_valuations=None, observation_to_actions=None) -> Simulator:
         """
             pomdp: The POMDP object that should be compiled into a jax-based environment.
@@ -71,7 +70,10 @@ class StormVecEnvBuilder:
         row_map = np.zeros(nr_states * nr_actions, dtype=np.int32)
         row_map[:] = -1
         sinks = np.zeros(nr_states, dtype=bool)
-        states_to_observations = np.array(pomdp.observations)
+        if not hasattr(pomdp, "observations"):
+            states_to_observations = np.arange(nr_states)
+        else:
+            states_to_observations = np.array(pomdp.observations)
 
         try:
             state_valuations = pomdp.state_valuations
@@ -233,7 +235,7 @@ class StormVecEnv:
         It uses JAX to compile the topology extracted from the given model, thus accelerating the interactions.
     """
 
-    def __init__(self, pomdp: SparsePomdp, get_scalarized_reward: Dict[str, np.array], num_envs=1, seed=42, metalabels=None, random_init=False, max_steps=100,
+    def __init__(self, pomdp, get_scalarized_reward: Dict[str, np.array], num_envs=1, seed=42, metalabels=None, random_init=False, max_steps=100,
                  obs_evaluator=None, quotient_state_valuations=None, observation_to_actions=None):
         """
             pomdp: The POMDP object that should be compiled into a jax-based environment.

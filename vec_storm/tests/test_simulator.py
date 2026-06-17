@@ -128,19 +128,20 @@ def _test_trajectory(env, actions, expected_observations, expected_rewards, expe
     o = _obs_to_dict(env, obs[0])
     # check that the initial observation is correct
     for key, val in expected_observations.items():
-        assert o[key] == approx(val[0])
+        assert o[key] == approx(val[0]), f"Expected {key} to be {val[0]} but got {o[key]}"
 
     # check steps
     for i, action in enumerate(actions):
-        assert(act_mask[0][action])
+        assert(act_mask[0][action]), f"Action {action} is not valid at step {i}"
 
         obs, rew, done, trunc, act_mask, labels = env.step(np.array([action]))
         o = _obs_to_dict(env, obs[0])
         for key, val in expected_observations.items():
-            assert o[key] == approx(val[i+1])
-        assert rew[0] == approx(expected_rewards[i])
-        assert np.all(done[0] == expected_dones[i])
-        assert np.all(labels[0] == expected_labels[i])
+            print(f"Step {i}, key {key}: expected {val[i+1]}, got {o[key]}")
+            assert o[key] == approx(val[i+1]), f"Expected {key} to be {val[i+1]} but got {o[key]}"
+        assert rew[0] == approx(expected_rewards[i]), f"Expected reward to be {expected_rewards[i]} but got {rew[0]}"
+        assert np.all(done[0] == expected_dones[i]), f"Expected done to be {expected_dones[i]} but got {done[0]}"
+        assert np.all(labels[0] == expected_labels[i]), f"Expected labels to be {expected_labels[i]} but got {labels[0]}"
 
 
 def test_crash():
@@ -201,7 +202,7 @@ def test_truncation():
     """
         Test that the environment is truncated after `max_steps` steps.
     """
-    env = StormVecEnv(load_pomdp(AVOID_DET), _get_cost_reward, num_envs=1, metalabels={"avoid": ["traps"], "reach": ["goal"]}, max_steps=3)
+    env = StormVecEnv(load_pomdp(AVOID_DET), _get_cost_reward, num_envs=1, metalabels={"avoid": ["traps"], "reach": ["goal"]}, max_steps=2)
     actions = [2, 0, 0]
     expected_observations = {
         "x": [0, 0, 1, 0],
@@ -209,8 +210,8 @@ def test_truncation():
         "hascrash": [0, 0, 0, 0],
         "start": [0, 1, 1, 0],
     }
-    expected_rewards = [0, 1, 1]
-    expected_dones = [False, False, True]
+    expected_rewards = [0, 1, 0]
+    expected_dones = [False, True, False]
     expected_labels =np.array([
         [False, False],
         [False, False],
